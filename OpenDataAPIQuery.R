@@ -16,6 +16,7 @@
 packages <- c(
   "jsonlite", # 1.6
   "dplyr",    # 0.8.3
+  "crul"      # 1.1.0
 )
 
 # Install packages if they aren't already
