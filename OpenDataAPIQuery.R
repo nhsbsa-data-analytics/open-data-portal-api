@@ -1,186 +1,235 @@
-# 1. Script details ----------------------------------------------------------
+# 1. Script details ------------------------------------------------------------
+
 # Name of script: OpenDataAPIQuery
 # Description:  Using R to query the NHSBSA open data portal API. 
 # Created by: Matthew Wilson (NHSBSA)
 # Created on: 26-03-2020
-# Latest update by:
-# Latest update on:
-# Update notes:
-# 
+# Latest update by: Adam Ivison (NHSBSA)
+# Latest update on: 24-06-2021
+# Update notes: Updated endpoint in the script, refactored code and added async
+
 # R version: created in 3.5.3
 
-# 2. Load packages --------------------------------------------------------
+# 2. Load packages -------------------------------------------------------------
 
-## list of packages that we will be using
-packages <- c("dplyr", "data table", "httr", "jsonlite")
+# List packages we will use
+packages <- c(
+  "jsonlite", # 1.6
+  "dplyr",    # 0.8.3
+)
 
-## install packages if they aren't already
+# Install packages if they aren't already
 if (length(setdiff(packages, rownames(installed.packages()))) > 0) {
     install.packages(setdiff(packages, rownames(installed.packages())))  
 }
 
-## library packages
-library(dplyr) #V 0.8.3
-library(data.table) #V 1.12.8
-library(httr) #V 1.4.1
-library(jsonlite) # 1.6
+# 3. Define variables ----------------------------------------------------------
 
-## clear working enviroment
-rm(list=ls()) 
+# Define the url for the API call
+base_endpoint <- "https://opendata.nhsbsa.net/api/3/action/"
+package_list_method <- "package_list"     # List of data-sets in the portal
+package_show_method <- "package_show?id=" # List all resources of a data-set
+action_method <- "datastore_search_sql?"  # SQL action method
 
-# 3. Define variables -----------------------------------------------------
+# Send API call to get list of data-sets
+datasets_response <- jsonlite::fromJSON(paste0(
+  base_endpoint, 
+  package_list_method
+))
 
-## set url to be used for API calls
-url <- "https://opendata.nhsbsa.net"
+# Now lets have a look at the data-sets currently available
+datasets_response$result
 
-## use 'package_list' API call to get list of all datasets held within portal
-package_list_path <- "/api/3/action/package_list"
-
-## send API call to get list of datasets
-datasets <- fromJSON(paste0(url, package_list_path))
-
-## now lets have a look at the datasets currently available
-datasets$result
-
-## for this example we're interested in the English Prescribing Dataset (EPD).
-## We know the name of this dataset so can set this manually, or access it 
-## from the datasets object.
+# For this example we're interested in the English Prescribing Dataset (EPD).
+# We know the name of this data-set so can set this manually, or access it 
+# from datasets_response.
 dataset_id <- "english-prescribing-data-epd"
 
-# 4. API calls for single month -------------------------------------------
+# 4. API calls for single month ------------------------------------------------
 
-#########################################
-# At the moment the functionality to pull out a whole month of EPD data via the API
-# with a single call is not enabled. This will be added in the near future.
-# If you require a full month of data this can still be downloaded in CSV
-# format direct from the Open Data Portal at https://opendata.nhsbsa.net/dataset/english-prescribing-data-epd
-# we have provided example code below to indicate how a full month of data
-# can be pulled out once the functionality is enabled, it is commented out currently.
+# Define the parameters for the SQL query
+resource_name <- "EPD_202001" # For EPD resources are named EPD_YYYYMM
+pco_code <- "13T00" # Newcastle Gateshead CCG
+bnf_chemical_substance <- "0407010H0" # Paracetamol
 
-# ## At first we just want to pull out a single full month of data. These datasets
-# ## can be 4GB or larger, therefore we have to be careful when pulling them into
-# ## local memory. Depending on your system configuration this could cause issues.
-# month_resource_name <- "EPD_202001"
+# Build SQL query (WHERE criteria should be enclosed in single quotes)  
+single_month_query <- paste0(
+  "
+  SELECT 
+      * 
+  FROM `", 
+      resource_name, "` 
+  WHERE 
+      1=1 
+  AND pco_code = '", pco_code, "' 
+  AND bnf_chemical_substance = '", bnf_chemical_substance, "'
+  "
+)
 
-# ## as the default for a standard call to the API places a limit on the number of records
-# ## returned we're going to use a SQL query to pull in the data.
-# 
-# ## The below query will pull in all data that is held in the datastore for the 
-# ## listed resource ID.
-# month_all_data_query <- URLencode(paste0("select * from ", month_resource_name," where 1 = 1"))
-# 
-# ## here we build the full API call
-# month_all_data_api_call <- paste0(url,
-#                                   "/api/3/action/datastore_search_sql?sql=",
-#                                   month_all_data_query)
-# 
-# ## the API call is then sent to the API and returns a list object containing the data
-# ## and some other things such as the SQL used to create the data
-# month_all_data_result <- fromJSON(month_all_data_api_call)
-# 
-# ## we're just interested in the data so pull that out into a standalone dataframe
-# month_all_data_df <- month_all_data_result$result$records
+# Build API call
+single_month_api_call <- paste0(
+  base_endpoint,
+  action_method,
+  "resource_id=",
+  resource_name, 
+  "&",
+  "sql=",
+  URLencode(single_month_query) # Encode spaces in the url
+)
 
-#########################################
+# Grab the response JSON as a list
+single_month_response <- jsonlite::fromJSON(single_month_api_call)
 
-## here we set the name of the resource that we want to access. For the English Prescribing Dataset (EPD)
-## all resources are named in the format EPD_YYYYMM. Lets look at the latest available at the time
-## of writing
-month_resource_name <- "EPD_202001"
+# Extract records in the response to a dataframe
+single_month_df <- single_month_response$result$result$records
 
-## we can also alter our SQL query to filter on a specific field, such as primary care organisation
-## or BNF code. Search criteria should be enclosed in single qutoes
-search_pco_code <- "'13T00'" # in our example we will use the code for Newcastle Gateshead CCG
-search_bnf_code <- "'0407010H0AAAMAM'" # and the BNF code for Paracetamol 500mg tablets
+# Lets have a quick look at the data
+str(single_month_df)
+head(single_month_df)
 
-## build SQL query.  
-month_query <- URLencode(paste0("select * from ", month_resource_name, 
-                                " where 1 = 1",
-                                " and PCO_CODE = ", search_pco_code,
-                                " and BNF_CODE = ", search_bnf_code))
+# You can use any of the fields listed in the data-set within the SQL query as 
+# part of the select or in the where clause in order to filter.
 
-## build API call
-month_api_call <- paste0(url,
-                         "/api/3/action/datastore_search_sql?sql=",
-                         month_query)
+# Information on the fields present in a data-set and an accompanying data 
+# dictionary can be found on the page for the relevant data-set on the Open Data 
+# Portal.
 
-## send API call
-month_result <- fromJSON(month_api_call)
+# 5. API calls for data for multiple months ------------------------------------
 
-## here we extract the data into it's own standalone dataframe
-month_df <- month_result$result$result$records
+# Now that you have extracted data for a single month, you may want to get the 
+# data for several months, or a whole year.
 
-## lets have a quick look at the data
-str(month_df)
-View(head(month_df))
+# Firstly we need to get a list of all of the names and resource IDs for every 
+# EPD file. We therefore extract the metadata for the EPD dataset.
+metadata_repsonse <- jsonlite::fromJSON(paste0(
+  base_endpoint, 
+  package_show_method,
+  dataset_id
+))
 
-## you can use any of the fields listed in the dataset within the SQL query
-## as part of the select or in the where clause in order to filter.
+# Resource names and IDs are kept within the resources table returned from the 
+# package_show_method call.
+resources_table <- metadata_repsonse$result$resources
 
-## information on the fields present in a dataset and an accompanying data dictionary
-## can be found on the page for the relevant dataset on the Open Data Portal.
+# We only want data for one calendar year, to do this we need to look at the 
+# name of the data-set to identify the year. For this example we're looking at 
+# 2020.
+resource_name_list <- resources_table$name[grepl("2020", resources_table$name)]
 
-# 5. API calls for data for multiple months -------------------------------
+# 5.1. For loop ----------------------------------------------------------------
 
-## Now that you have extracted data for a single month, you may want to get the data for several
-## months, or a whole year. We can do this with a for loop that makes all of
-## the individual API calls for you and combines the data together into one dataframe
+# We can do this with a for loop that makes all of the individual API calls for 
+# you and combines the data together into one dataframe
 
-## Firstly we need to get a list of all of the names and resource IDs for every 
-## EPD file. We therefore extract the metadata for the EPD dataset.
-metadata <- fromJSON(paste0(url,"/api/3/action/package_show?id=",dataset_id))
+# Initialise dataframe that data will be saved to
+for_loop_df <- data.frame()
 
-## resource names and IDs are kept within the resources table returned from
-## the package_show call.
-resources_table <- metadata$result$resources
+# As each individual month of EPD data is so large it will be unlikely that your 
+# local system will have enough RAM to hold a full year's worth of data in 
+# memory. Therefore we will only look at a single CCG and chemical substance as 
+# we did previously
 
-## We only want data for one calendar year, to do this we need to look at the name
-## of the dataset to identify the year. For this example we're looking at 2019
-resources <- resources_table %>%
-  filter(grepl("2019", name))
-
-## Initialise dataframe that data will be saved to
-epd_df <- data.frame()
-
-## as each individual month of EPD data is so large it will be unlikely
-## that your local system will have enough RAM to hold a full year's
-## worth of data in memory. Therefore we will only look at a single 
-## chemical substance, Atorvastatin - 0212000B0
-search_chem_sub_code <- "'0212000B0'"
-
-## Loop through ID list and make call to API to extract data, then bind each
-## month together to make a single dataset
-for(i in seq_along(resources$name)) {
-  ## we're going to use a SQL query to get the data that we want
-  loop_query <- URLencode(paste0("select * from ", resources$name[i], 
-                                 " where 1 = 1",
-                                 " and BNF_CHEMICAL_SUBSTANCE = ", search_chem_sub_code))
+# Loop through resource_name_list and make call to API to extract data, then 
+# bind each month together to make a single data-set
+for(month in resource_name_list) {
   
-  ## build temporary API call
-  loop_api_call <- paste0(url,
-                          "/api/3/action/datastore_search_sql?sql=",
-                          loop_query)
+  # Build temporary SQL query 
+  tmp_query <- paste0(
+    "
+    SELECT 
+        * 
+    FROM `", 
+        month, "` 
+    WHERE 
+        1=1 
+    AND pco_code = '", pco_code, "' 
+    AND bnf_chemical_substance = '", bnf_chemical_substance, "'
+    "
+  )
   
-  ## send API call
-  loop_result <- fromJSON(loop_api_call)
+  # Build temporary API call
+  tmp_api_call <- paste0(
+    base_endpoint,
+    action_method,
+    "resource_id=",
+    month, 
+    "&",
+    "sql=",
+    URLencode(tmp_query) # Encode spaces in the url
+  )
   
-  ## extract records into temporary standalone dataframe
-  loop_df <- loop_result$result$result$records
+  # Grab the response JSON as a temporary list
+  tmp_response <- jsonlite::fromJSON(tmp_api_call)
   
-  ## union the temporary data to the main pdpi dataframe
-  epd_df <- bind_rows(epd_df, loop_df)
+  # Extract records in the response to a temporary dataframe
+  tmp_df <- tmp_response$result$result$records
+  
+  # Bind the temporary data to the main dataframe
+  for_loop_df <- dplyr::bind_rows(for_loop_df, tmp_df)
 }
 
+# 5.2. Async -- ----------------------------------------------------------------
 
-# 6. Exporting the data ---------------------------------------------------
+# We can call the API asynchronously and this will result in an approx 10x speed 
+# increase over a for loop for large resource_names by vectorising our approach.
 
-## now that we have extracted the data that we are interested, we can export it
-## we'll use the fwrite() function in the data.table package to export the 
-## data, as it is many times quicker than the base write.csv() function. 
-## the below functions will output the data to your default working directory
-## or to a location you have set your working directory previously,
+# Construct the SQL query as a function
+async_query <- function(resource_name) {
+  paste0(
+    "
+    SELECT 
+        * 
+    FROM `", 
+        resource_name, "` 
+    WHERE 
+        1=1 
+    AND pco_code = '", pco_code, "' 
+    AND bnf_chemical_substance = '", bnf_chemical_substance, "'
+    "
+  )
+}
 
-# fwrite(month_all_data_df, "full-month-data.csv")
-fwrite(month_df, "api-data.csv")
-fwrite(epd_df, "epd-data.csv")
+# Create the API calls
+async_api_calls <- lapply(
+  X = resource_name_list,
+  FUN = function(x) 
+    paste0(
+      base_endpoint,
+      action_method,
+      "resource_id=",
+      x, 
+      "&",
+      "sql=",
+      URLencode(async_query(x)) # Encode spaces in the url
+    )
+)
 
+# Use crul::Async to get the results
+dd <- crul::Async$new(urls = async_api_calls)
+res <- dd$get()
+
+# Check that everything is a success
+all(vapply(res, function(z) z$success(), logical(1)))
+
+# Parse the output into a list of dataframes
+async_dfs <- lapply(
+  X = res, 
+  FUN = function(x) {
+    
+    # Parse the response
+    tmp_response <- x$parse("UTF-8")
+    
+    # Extract the records
+    tmp_df <- jsonlite::fromJSON(tmp_response)$result$result$records
+  }
+)
+
+# Concatenate the results 
+aysnc_df <- do.call(dplyr::bind_rows, async_dfs)
+
+# 6. Export the data -----------------------------------------------------------
+
+# Use write.csv for ease
+write.csv(single_month_df, "single_month.csv")
+write.csv(for_loop_df, "for_loop.csv")
+write.csv(aysnc_df, "aysnc.csv")
